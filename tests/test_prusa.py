@@ -247,6 +247,47 @@ class TestMK4020Process:
         assert p.speed_mm_s.perimeter == 45.0
         assert p.speed_mm_s.external_perimeter == 25.0
 
+
+class TestV03NewFields:
+    """v0.3 additions: PA/LA + jerk + start/end gcode + filament_diameter
+    on Prusa. MK4 family carries all these in PrusaResearch.ini."""
+
+    def test_mk4_start_end_gcode_populated(
+        self,
+        prusa_bundle: ProfileBundle,
+    ) -> None:
+        printer = next(
+            p for p in prusa_bundle.printers.values()
+            if p.name == "Original Prusa MK4 0.4 nozzle"
+        )
+        assert printer.start_gcode is not None
+        assert "M862" in printer.start_gcode  # Prusa's printer-model check header
+        assert printer.end_gcode is not None
+        assert "M104 S0" in printer.end_gcode
+
+    def test_mk4_max_jerk_populated(self, prusa_bundle: ProfileBundle) -> None:
+        printer = next(
+            p for p in prusa_bundle.printers.values()
+            if p.name == "Original Prusa MK4 0.4 nozzle"
+        )
+        # PrusaResearch.ini carries machine_max_jerk_x/y in commonMK4.
+        # Non-None + positive is enough; the exact value is a vendor
+        # default that can drift between Prusa settings releases.
+        assert printer.max_jerk_mm_s is not None
+        assert printer.max_jerk_mm_s > 0
+
+    def test_prusament_pla_filament_diameter(
+        self,
+        prusa_bundle: ProfileBundle,
+    ) -> None:
+        f = next(
+            f for f in prusa_bundle.filaments.values() if f.name == "Prusament PLA"
+        )
+        # Prusa's `filament_diameter` lives on the material base. 1.75 is
+        # the PrusaResearch.ini default; a 2.85mm-only fleet would read
+        # different.
+        assert f.filament_diameter_mm == pytest.approx(1.75)
+
     def test_multi_parent_layer_height_inherited(
         self,
         prusa_bundle: ProfileBundle,

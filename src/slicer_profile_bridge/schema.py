@@ -129,6 +129,24 @@ class SeamPosition(str, Enum):
     UNKNOWN = "unknown"
 
 
+class NozzleType(str, Enum):
+    """Nozzle geometry class — controls max volumetric throughput.
+
+    `standard` = OEM brass / hardened 0.4mm baseline. `volcano` (E3D) +
+    `chc` (Slice Engineering) + `cht` (Bondtech) trade weight and heat-up
+    time for 2-3× flow. `high_flow` is a catch-all for any vendor-branded
+    high-throughput hotend. Audit consumers derive the flow ceiling from
+    this, not just `nozzle_diameter_mm`.
+    """
+
+    STANDARD = "standard"
+    VOLCANO = "volcano"
+    CHC = "chc"
+    CHT = "cht"
+    HIGH_FLOW = "high_flow"
+    UNKNOWN = "unknown"
+
+
 # ── Nested value objects ───────────────────────────────────────────────
 
 
@@ -269,9 +287,24 @@ class CanonicalPrinter(_StrictModel):
 
     # FDM-specific
     nozzle_diameter_mm: PositiveFloat | None = None
+    nozzle_type: NozzleType = NozzleType.UNKNOWN
     retraction_type: RetractionType = RetractionType.UNKNOWN
     max_feedrate_mm_s: AxisSpeeds | None = None
     max_accel_mm_s2: AxisSpeeds | None = None
+
+    # Motion tuning (FDM). PA/LA expresses per-move extrusion ramp the
+    # firmware applies (M900/M572/SET_PRESSURE_ADVANCE). Jerk is the old
+    # Marlin junction-speed step; junction_deviation is the newer
+    # continuous alternative — modern firmware carries one or the other.
+    pressure_advance_k: NonNegativeFloat | None = None
+    max_jerk_mm_s: PositiveFloat | None = None
+    junction_deviation_mm: NonNegativeFloat | None = None
+
+    # Verbatim G-code injection points. Both vendors expose these via
+    # `machine_start_gcode` / `machine_end_gcode`. Consumers comparing a
+    # user's gcode against a simulated slice need the header to match.
+    start_gcode: str | None = None
+    end_gcode: str | None = None
 
     # Resin-specific
     pixel_size_mm: PositiveFloat | None = None
@@ -306,6 +339,11 @@ class CanonicalFilament(_StrictModel):
     shrinkage_pct: float | None = None
     bridge_flow: Annotated[float, Field(gt=0, le=2)] | None = None
     max_volumetric_speed_mm3_s: PositiveFloat | None = None
+    # Filament strand diameter. 1.75mm is the hobbyist default; 2.85mm
+    # still ships on older LulzBot / Ultimaker / some industrial rigs.
+    # Optional because a few vendors omit it; consumers treat None as
+    # "assume 1.75" but must not mix that with a 2.85 machine silently.
+    filament_diameter_mm: PositiveFloat | None = None
 
     # FDM handling hints
     cooling: CoolingSettings | None = None
@@ -356,6 +394,12 @@ class CanonicalProcess(_StrictModel):
     # Motion
     speed_mm_s: ProcessSpeeds | None = None
     default_acceleration_mm_s2: PositiveFloat | None = None
+    # Process-level PA override. Some slicers let a recipe specialise PA
+    # per material or quality on top of the printer default (Orca's
+    # `pressure_advance` applied to a specific process, Prusa's
+    # `linear_advance_speed` in a print preset). When present, this wins
+    # over `CanonicalPrinter.pressure_advance_k` for that recipe.
+    pressure_advance_k: NonNegativeFloat | None = None
 
     # Support structure
     support: SupportSettings | None = None

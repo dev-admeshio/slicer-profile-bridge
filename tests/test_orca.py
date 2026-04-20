@@ -22,6 +22,7 @@ import pytest
 from slicer_profile_bridge import (
     FilamentCategory,
     Kinematics,
+    NozzleType,
     PrinterTechnology,
     ProfileBundle,
     RetractionType,
@@ -221,6 +222,61 @@ class TestBambu020Process:
     def test_process_compatible_printers(self, bbl_bundle: ProfileBundle) -> None:
         p = next(p for p in bbl_bundle.processes.values() if "0.20mm Standard @BBL X1C" in p.name)
         assert "Bambu Lab X1 Carbon 0.4 nozzle" in p.compatible_printers
+
+
+class TestV03NewFields:
+    """v0.3 additions: PA / jerk / JD / start-end gcode / nozzle_type /
+    filament_diameter. Fixture X1C carries most of these via inheritance
+    from fdm_machine_common + fdm_filament_common."""
+
+    def test_printer_start_end_gcode_populated(self, bbl_bundle: ProfileBundle) -> None:
+        printer = next(
+            p for p in bbl_bundle.printers.values() if "X1 Carbon" in p.name
+        )
+        # X1C_0.4 carries an explicit machine_start_gcode (overrides base).
+        assert printer.start_gcode is not None
+        assert "M104" in printer.start_gcode or "M109" in printer.start_gcode
+        assert printer.end_gcode is not None
+        assert "M140 S0" in printer.end_gcode
+
+    def test_printer_max_jerk_from_fdm_machine_common(
+        self,
+        bbl_bundle: ProfileBundle,
+    ) -> None:
+        """`machine_max_jerk_x/y` live on the abstract base — inherited
+        into X1C_0.4. Max of X/Y is the outer-envelope value."""
+        printer = next(
+            p for p in bbl_bundle.printers.values() if "X1 Carbon" in p.name
+        )
+        assert printer.max_jerk_mm_s is not None
+        assert printer.max_jerk_mm_s > 0
+
+    def test_printer_nozzle_type_inferred_from_variant_list(
+        self,
+        bbl_bundle: ProfileBundle,
+    ) -> None:
+        """X1C's `extruder_variant_list` advertises a Direct Drive High
+        Flow option, so the classifier should promote it past UNKNOWN —
+        the positive assertion that the vendor-string scanner works."""
+        printer = next(
+            p for p in bbl_bundle.printers.values() if "X1 Carbon" in p.name
+        )
+        assert printer.nozzle_type in (
+            NozzleType.STANDARD,
+            NozzleType.HIGH_FLOW,
+            NozzleType.VOLCANO,
+            NozzleType.CHC,
+            NozzleType.CHT,
+        )
+
+    def test_filament_diameter_1_75_from_base(
+        self,
+        bbl_bundle: ProfileBundle,
+    ) -> None:
+        """`filament_diameter` lives on `fdm_filament_common`; every
+        concrete PLA filament inherits it as 1.75mm."""
+        f = next(f for f in bbl_bundle.filaments.values() if "PLA Basic" in f.name)
+        assert f.filament_diameter_mm == pytest.approx(1.75)
 
 
 class TestRawDataPassThrough:

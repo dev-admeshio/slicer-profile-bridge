@@ -129,3 +129,36 @@ class TestCrossSlicerConsistency:
         # Only source.slicer should differ.
         assert bambu_printer.source.slicer == "bambu"
         assert orca_printer.source.slicer == "orca"
+
+    def test_v03_fields_present_on_both(
+        self,
+        bambu_bundle: ProfileBundle,
+    ) -> None:
+        """v0.3 additions (start/end_gcode, max_jerk, filament_diameter,
+        nozzle_type) must be populated by both Bambu and Orca translators
+        because they map the same vendor key sets. Values differ — Bambu
+        and Orca ship independently-maintained X1C presets that drift
+        on firmware-specific gcode blocks — but presence-parity is the
+        invariant worth locking in."""
+        from slicer_profile_bridge import load_orca
+
+        orca_fixtures = Path(__file__).parent / "fixtures" / "orca"
+        orca_bundle = load_orca(orca_fixtures)
+
+        bambu_p = next(p for p in bambu_bundle.printers.values() if "X1 Carbon" in p.name)
+        orca_p  = next(p for p in orca_bundle.printers.values()  if "X1 Carbon" in p.name)
+
+        # Both should populate gcode blocks (non-empty, but actual text
+        # differs between the two vendor repos and that's expected).
+        assert bambu_p.start_gcode and orca_p.start_gcode
+        assert bambu_p.end_gcode and orca_p.end_gcode
+        # Machine kinematic limits live on shared inherited bases — must
+        # match exactly across both.
+        assert bambu_p.max_jerk_mm_s == orca_p.max_jerk_mm_s
+        # Nozzle type derived from the same vendor-string scanner →
+        # same enum regardless of source bundle.
+        assert bambu_p.nozzle_type == orca_p.nozzle_type
+
+        bambu_f = next(f for f in bambu_bundle.filaments.values() if "PLA Basic" in f.name)
+        orca_f  = next(f for f in orca_bundle.filaments.values()  if "PLA Basic" in f.name)
+        assert bambu_f.filament_diameter_mm == orca_f.filament_diameter_mm

@@ -112,6 +112,19 @@ def _to_str(value: Any) -> str | None:
     return s if s else None
 
 
+def _to_str_verbatim(value: Any) -> str | None:
+    """Like `_to_str` but preserves embedded commas. Needed for
+    multi-line g-code fields (`start_gcode`, `end_gcode`): Prusa
+    encodes nested template expressions — `{if x < max, y}` — that
+    the CSV-first helper would truncate at the first comma.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return str(value).strip() or None
+    return value.strip() or None
+
+
 def _to_str_semi_list(value: Any) -> list[str]:
     """Prusa uses `;`-separated lists for `compatible_printers` and the
     like. `inherits` already gets split by the loader — this is for the
@@ -329,6 +342,21 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
     # dedicated field when present, fall back to the profile name.
     printer_model = _to_str(data.get("printer_model")) or resolved.name
 
+    # Motion tuning. Prusa uses the older `machine_max_jerk_*` family as
+    # well as `default_junction_deviation` on newer firmware profiles
+    # (MK4 / XL / MINI+ post-firmware-5). Take the max of x/y jerk for
+    # the outer envelope — same strategy as Orca.
+    max_jerk = _to_float(data.get("machine_max_jerk_x"))
+    jerk_y = _to_float(data.get("machine_max_jerk_y"))
+    if max_jerk is not None and jerk_y is not None:
+        max_jerk = max(max_jerk, jerk_y)
+    elif jerk_y is not None:
+        max_jerk = jerk_y
+    junction_dev = (
+        _to_float(data.get("machine_max_junction_deviation"))
+        or _to_float(data.get("default_junction_deviation"))
+    )
+
     return CanonicalPrinter(
         id=f"{resolved.vendor}/{resolved.name}",
         name=resolved.name,
@@ -342,6 +370,16 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
         retraction_type=retraction_type,
         max_feedrate_mm_s=axis_feed,
         max_accel_mm_s2=axis_accel,
+        max_jerk_mm_s=max_jerk if max_jerk and max_jerk > 0 else None,
+        junction_deviation_mm=junction_dev if junction_dev and junction_dev > 0 else None,
+        start_gcode=(
+            _to_str_verbatim(data.get("start_gcode"))
+            or _to_str_verbatim(data.get("machine_start_gcode"))
+        ),
+        end_gcode=(
+            _to_str_verbatim(data.get("end_gcode"))
+            or _to_str_verbatim(data.get("machine_end_gcode"))
+        ),
         source=source,
         raw_data=_strip_metadata(data),
     )
@@ -418,6 +456,7 @@ def translate_filament(resolved: ResolvedProfile) -> CanonicalFilament:
         shrinkage_pct=None,    # Prusa doesn't carry a first-class shrinkage field
         bridge_flow=_to_float(data.get("bridge_flow_ratio")),
         max_volumetric_speed_mm3_s=_to_float(data.get("filament_max_volumetric_speed")),
+        filament_diameter_mm=_to_float(data.get("filament_diameter")),
         cooling=cooling,
         retraction=retraction,
         source=source,
@@ -484,6 +523,13 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
         inherits_chain=resolved.inherits_chain,
     )
 
+    # Process-level Linear Advance on Prusa. PrusaSlicer exposes LA via
+    # the print preset as an extrusion-rate override; the k-factor lives
+    # in the filament preset usually but some process presets carry a
+    # speed ceiling. Map `linear_advance_speed` → pressure_advance_k so
+    # consumers have one field name regardless of firmware family.
+    pa_k = _to_float(data.get("linear_advance_speed"))
+
     return CanonicalProcess(
         id=f"{resolved.vendor}/{resolved.name}",
         name=resolved.name,
@@ -501,6 +547,7 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
         raw_infill_pattern=raw_pattern if infill_pattern is InfillPattern.OTHER else None,
         speed_mm_s=speeds,
         default_acceleration_mm_s2=_to_float(data.get("default_acceleration")),
+        pressure_advance_k=pa_k if pa_k and pa_k > 0 else None,
         support=support,
         adhesion=adhesion,
         seam_position=_normalise_seam(_to_str(data.get("seam_position"))),

@@ -33,6 +33,7 @@ from slicer_profile_bridge.schema import (
     InfillPattern,
     Kinematics,
     NozzleTemps,
+    NozzleType,
     PrinterTechnology,
     ProcessSpeeds,
     ProfileBundle,
@@ -294,6 +295,30 @@ def _infer_enclosure(printer_model: str | None) -> bool:
     return any(h in name for h in _ENCLOSED_MODEL_HINTS)
 
 
+def _nozzle_type_from_orca(data: dict[str, Any]) -> NozzleType:
+    """Infer nozzle geometry class from Orca's `nozzle_volume_type` or
+    `extruder_variant_list`. These carry strings like "Standard", "High
+    Flow", "Volcano", etc. "nozzle_type" itself is the *material*
+    (brass / hardened steel) in Orca's vocabulary, so we avoid it.
+    """
+    for key in ("nozzle_volume_type", "extruder_variant_list"):
+        raw = _first(data.get(key))
+        if not isinstance(raw, str):
+            continue
+        s = raw.lower()
+        if "volcano" in s:
+            return NozzleType.VOLCANO
+        if "cht" in s:
+            return NozzleType.CHT
+        if "chc" in s:
+            return NozzleType.CHC
+        if "high flow" in s or "high_flow" in s or "bigtraffic" in s or "big traffic" in s:
+            return NozzleType.HIGH_FLOW
+        if "standard" in s:
+            return NozzleType.STANDARD
+    return NozzleType.UNKNOWN
+
+
 def _retraction_type_from_orca(data: dict[str, Any]) -> RetractionType:
     """Orca stores retraction topology in `extruder_type` or in
     `extruder_variant_list` (comma-separated). Bambu X1C uses
@@ -396,6 +421,21 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
             raw_data=raw_data,
         )
 
+    # Motion tuning (Klipper-style). Orca carries printer-level PA on
+    # some vendor profiles (`pressure_advance`), but the authoritative
+    # value usually lives on the process. Populate only when a printer
+    # default exists; consumers should prefer CanonicalProcess.pressure_advance_k.
+    pa_k = _to_float(data.get("pressure_advance"))
+    max_jerk = _to_float(data.get("machine_max_jerk_x"))
+    # Some Orca profiles also store a jerk-y; take the max so audits read
+    # the outer envelope the planner can emit, not the smaller axis.
+    jerk_y = _to_float(data.get("machine_max_jerk_y"))
+    if max_jerk is not None and jerk_y is not None:
+        max_jerk = max(max_jerk, jerk_y)
+    elif jerk_y is not None:
+        max_jerk = jerk_y
+    junction_dev = _to_float(data.get("default_junction_deviation"))
+
     return CanonicalPrinter(
         id=profile_id,
         name=resolved.name,
@@ -403,12 +443,18 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
         technology=PrinterTechnology.FDM,
         build_volume_mm=build_volume,
         nozzle_diameter_mm=_to_float(data.get("nozzle_diameter")),
+        nozzle_type=_nozzle_type_from_orca(data),
         firmware=_to_str(data.get("gcode_flavor")),
         kinematics=_infer_kinematics(printer_model),
         enclosure=_infer_enclosure(printer_model),
         retraction_type=_retraction_type_from_orca(data),
         max_feedrate_mm_s=feed,
         max_accel_mm_s2=accel,
+        pressure_advance_k=pa_k if pa_k and pa_k > 0 else None,
+        max_jerk_mm_s=max_jerk if max_jerk and max_jerk > 0 else None,
+        junction_deviation_mm=junction_dev if junction_dev and junction_dev > 0 else None,
+        start_gcode=_to_str(data.get("machine_start_gcode")),
+        end_gcode=_to_str(data.get("machine_end_gcode")),
         source=source,
         raw_data=raw_data,
     )
@@ -503,6 +549,7 @@ def translate_filament(resolved: ResolvedProfile) -> CanonicalFilament:
         shrinkage_pct=_to_float(data.get("filament_shrink")),
         bridge_flow=_to_float(data.get("bridge_flow")),
         max_volumetric_speed_mm3_s=_to_float(data.get("filament_max_volumetric_speed")),
+        filament_diameter_mm=_to_float(data.get("filament_diameter")),
         cooling=cooling,
         retraction=retraction,
         source=source,
@@ -559,6 +606,11 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
         raft_layers=_to_int(data.get("raft_layers")),
     )
 
+    # Process-level PA override. Orca exposes this through
+    # `pressure_advance` at the process level for recipes that tune PA
+    # per material / quality — wins over the printer default when present.
+    pa_k = _to_float(data.get("pressure_advance"))
+
     return CanonicalProcess(
         id=f"{resolved.vendor}/{resolved.name}",
         name=resolved.name,
@@ -576,6 +628,7 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
         raw_infill_pattern=raw_pattern if infill_pattern is InfillPattern.OTHER else None,
         speed_mm_s=speeds,
         default_acceleration_mm_s2=_to_float(data.get("default_acceleration")),
+        pressure_advance_k=pa_k if pa_k and pa_k > 0 else None,
         support=support,
         adhesion=adhesion,
         seam_position=_normalise_seam(_to_str(data.get("seam_position"))),

@@ -9,6 +9,89 @@ this project follows [semver](https://semver.org/). Everything on the
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-20
+
+Audit trust release. Adds the motion-tuning + custom-gcode + filament-
+diameter + nozzle-type fields that audit consumers need to verify a real
+user gcode against a simulated slice. Every addition is optional and
+additive — existing v0.2.x consumers keep working, they just see `None`
+on the new fields until they upgrade.
+
+### Added
+
+**`CanonicalPrinter`**:
+
+- `pressure_advance_k: float | None` — PA / LA k-factor (seconds). Source
+  of `M900` / `M572` / `SET_PRESSURE_ADVANCE` at gcode emission time.
+- `max_jerk_mm_s: float | None` — classic Marlin junction-speed step.
+  Populated by both Orca and Prusa from `machine_max_jerk_x/y` (max of
+  the two axes for the outer envelope).
+- `junction_deviation_mm: float | None` — modern continuous-motion
+  alternative to jerk. Newer firmware carries one or the other.
+- `start_gcode: str | None`, `end_gcode: str | None` — verbatim G-code
+  injection points. A gcode-verify consumer comparing a user's gcode
+  against a simulated slice needs the header / footer to match.
+- `nozzle_type: NozzleType` — geometry class (`standard`, `volcano`,
+  `chc`, `cht`, `high_flow`, `unknown`). Controls max volumetric
+  throughput derivation beyond `nozzle_diameter_mm` alone. Inferred
+  from Orca's `nozzle_volume_type` / `extruder_variant_list`;
+  defaults to `unknown` when no marker is present.
+
+**`CanonicalFilament`**:
+
+- `filament_diameter_mm: float | None` — 1.75mm is the hobbyist default;
+  2.85mm still ships on older LulzBot / Ultimaker / some industrial rigs.
+  Consumers treat `None` as "assume 1.75" but must not mix that with a
+  2.85 machine silently.
+
+**`CanonicalProcess`**:
+
+- `pressure_advance_k: float | None` — process-level PA override. Wins
+  over `CanonicalPrinter.pressure_advance_k` when both are set, matching
+  slicer precedence (Orca's per-process `pressure_advance`, Prusa's
+  `linear_advance_speed`).
+
+**New enum**: `NozzleType` exported from the package root.
+
+### Changed
+
+- Prusa translator gains `_to_str_verbatim()` for multi-line gcode
+  fields. The CSV-first helper used elsewhere would truncate at the
+  first comma, and PrusaResearch.ini gcode blocks routinely embed
+  `{if layer_z < max, y}` style template commas.
+
+### Translator coverage
+
+- Orca: populates all six new printer fields + filament diameter +
+  process PA. Nozzle-type classifier matches `volcano`, `cht`, `chc`,
+  `high flow`, `bigtraffic`.
+- Prusa: populates jerk, junction_deviation, start/end gcode, filament
+  diameter, and process-level PA from `linear_advance_speed`. Printer-
+  level PA left as `None` — Prusa firmware defaults live per-filament.
+- Bambu: thin wrapper over Orca; all new fields flow through unchanged
+  except `source.slicer`.
+
+### Tests
+
+87 tests (up from 68). New coverage:
+
+- Schema bounds on every new field (non-negative / positive / enum
+  domain, round-trip).
+- Orca + Prusa end-to-end assertions against real fixtures: start/end
+  gcode text, `max_jerk_mm_s > 0`, `filament_diameter_mm == 1.75`.
+- Cross-slicer consistency: Bambu-translated vs Orca-translated X1C
+  agree on `max_jerk` + `nozzle_type` + `filament_diameter` even though
+  start/end gcode legitimately drifts between the two upstream repos.
+
+### Rationale
+
+First external consumer (Admeshio) is moving from "Beta" to "V1" and
+needs GRI-I (gcode-inspection) to become authoritative. Without PA +
+jerk + custom gcode + filament diameter the simulated-vs-actual gcode
+diff produces too many false positives to trust in production. These
+fields are universally present in FDM vendor profiles — no speculative
+schema, just promoting data that was already sitting in `raw_data`.
+
 ## [0.2.1] — 2026-04-20
 
 ### Fixed
