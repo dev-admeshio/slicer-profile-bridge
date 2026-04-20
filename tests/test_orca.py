@@ -223,6 +223,44 @@ class TestBambu020Process:
         assert "Bambu Lab X1 Carbon 0.4 nozzle" in p.compatible_printers
 
 
+class TestRawDataPassThrough:
+    """Canonical schema promotes a curated subset of fields to first-class.
+    Everything else must survive in `raw_data` so consumers can reach vendor
+    detail the canonical schema doesn't expose — without forcing bridge PRs
+    for every new audit check.
+    """
+
+    def test_printer_raw_data_carries_unmapped_fields(
+        self,
+        bbl_bundle: ProfileBundle,
+    ) -> None:
+        printer = next(
+            p for p in bbl_bundle.printers.values() if "X1 Carbon" in p.name
+        )
+        # Orca ships `fan_direction`, `extruder_offset`, `before_layer_gcode`
+        # and a hundred other fields we don't promote. Pick a stable one.
+        assert "fan_direction" in printer.raw_data or "extruder_offset" in printer.raw_data
+
+    def test_raw_data_strips_metadata_keys(
+        self,
+        bbl_bundle: ProfileBundle,
+    ) -> None:
+        """`type`, `name`, `inherits`, `setting_id` and the like describe
+        the profile's inheritance position, not its effective values.
+        Keeping them out of `raw_data` keeps consumer queries honest.
+        """
+        printer = next(
+            p for p in bbl_bundle.printers.values() if "X1 Carbon" in p.name
+        )
+        for k in ("type", "name", "inherits", "setting_id", "instantiation"):
+            assert k not in printer.raw_data
+
+    def test_filament_raw_data_populated(self, bbl_bundle: ProfileBundle) -> None:
+        f = next(f for f in bbl_bundle.filaments.values() if "PLA Basic" in f.name)
+        assert isinstance(f.raw_data, dict)
+        assert len(f.raw_data) > 0
+
+
 class TestCompose:
     def test_compose_returns_fully_typed_recipe(
         self,

@@ -44,6 +44,20 @@ from slicer_profile_bridge.schema import (
     SupportSettings,
 )
 
+# Metadata keys we strip from the raw_data pass-through — these describe
+# the profile's place in the inheritance DAG, not its effective values,
+# and repeating them inside `raw_data` would just invite confusion.
+_METADATA_KEYS: frozenset[str] = frozenset({
+    "type", "name", "inherits", "from", "setting_id", "instantiation",
+    "filament_id", "description",
+})
+
+
+def _strip_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of `data` without the profile-metadata keys."""
+    return {k: v for k, v in data.items() if k not in _METADATA_KEYS}
+
+
 # ── Primitive coercion ────────────────────────────────────────────────
 # Orca stores almost every numeric value as a string, and frequently
 # wraps scalars in a one-element list so multi-extruder machines can
@@ -367,6 +381,8 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
         inherits_chain=resolved.inherits_chain,
     )
 
+    raw_data = _strip_metadata(data)
+
     if is_resin:
         return CanonicalPrinter(
             id=profile_id,
@@ -377,6 +393,7 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
             pixel_size_mm=_to_float(data.get("display_pixel_size")),
             z_step_mm=_to_float(data.get("z_step")),
             source=source,
+            raw_data=raw_data,
         )
 
     return CanonicalPrinter(
@@ -393,6 +410,7 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
         max_feedrate_mm_s=feed,
         max_accel_mm_s2=accel,
         source=source,
+        raw_data=raw_data,
     )
 
 
@@ -488,6 +506,7 @@ def translate_filament(resolved: ResolvedProfile) -> CanonicalFilament:
         cooling=cooling,
         retraction=retraction,
         source=source,
+        raw_data=_strip_metadata(data),
     )
 
 
@@ -507,9 +526,12 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
     speeds = ProcessSpeeds(
         perimeter=_to_float(data.get("inner_wall_speed")),
         external_perimeter=_to_float(data.get("outer_wall_speed")),
+        small_perimeter=_to_float(data.get("small_perimeter_speed")),
         infill=_to_float(data.get("sparse_infill_speed")),
         solid_infill=_to_float(data.get("internal_solid_infill_speed")),
         top_solid_infill=_to_float(data.get("top_surface_speed")),
+        gap_infill=_to_float(data.get("gap_infill_speed")),
+        bridge=_to_float(data.get("bridge_speed")),
         support=_to_float(data.get("support_speed")),
         travel=_to_float(data.get("travel_speed")),
         first_layer=_to_float(data.get("initial_layer_speed")),
@@ -553,6 +575,7 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
         infill_pattern=infill_pattern,
         raw_infill_pattern=raw_pattern if infill_pattern is InfillPattern.OTHER else None,
         speed_mm_s=speeds,
+        default_acceleration_mm_s2=_to_float(data.get("default_acceleration")),
         support=support,
         adhesion=adhesion,
         seam_position=_normalise_seam(_to_str(data.get("seam_position"))),
@@ -562,6 +585,7 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
             source_id=resolved.name,
             inherits_chain=resolved.inherits_chain,
         ),
+        raw_data=_strip_metadata(data),
     )
 
 

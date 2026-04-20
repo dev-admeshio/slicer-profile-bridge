@@ -1,0 +1,112 @@
+name: Sync upstream slicer profiles
+
+# Runs daily + on-demand. Clones OrcaSlicer / PrusaSlicer / BambuStudio,
+# runs the translator suite over their profile trees, and publishes the
+# canonical profile index as a GitHub release artifact so downstream
+# consumers (Admeshio, anyone else polling the project) always have the
+# latest vendor data without cloning megabytes of slicer source.
+#
+# Not pushed to `main` — goes to the `profiles-data` branch. Keeps the
+# library source history clean while still carrying the translated data
+# in-repo for cheap `git clone`-based consumption.
+
+on:
+  schedule:
+    # 06:00 UTC daily. Upstream slicer vendors usually land profile
+    # updates in batches during business hours; morning-next-day catches
+    # most of them before downstream deploys hit them.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout bridge
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bridge
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # Shallow clones — we only need the profile directories, not the
+      # full C++ source history. --depth=1 shaves ~500 MB off each.
+      - name: Checkout OrcaSlicer profiles
+        uses: actions/checkout@v4
+        with:
+          repository: SoftFever/OrcaSlicer
+          path: upstream/orca
+          sparse-checkout: resources/profiles
+          fetch-depth: 1
+
+      - name: Checkout PrusaSlicer profiles
+        uses: actions/checkout@v4
+        with:
+          repository: prusa3d/PrusaSlicer
+          path: upstream/prusa
+          sparse-checkout: resources/profiles
+          fetch-depth: 1
+
+      - name: Checkout BambuStudio profiles
+        uses: actions/checkout@v4
+        with:
+          repository: bambulab/BambuStudio
+          path: upstream/bambu
+          sparse-checkout: resources/profiles
+          fetch-depth: 1
+
+      - name: Translate into canonical profiles
+        run: |
+          python scripts/sync_upstream.py \
+              --orca   upstream/orca/resources/profiles \
+              --prusa  upstream/prusa/resources/profiles \
+              --bambu  upstream/bambu/resources/profiles \
+              --output dist/canonical-profiles.json \
+              --summary dist/sync-summary.md
+
+      - name: Record upstream commits
+        run: |
+          {
+            echo "# Upstream versions"
+            echo
+            for slicer in orca prusa bambu; do
+              sha=$(git -C upstream/$slicer rev-parse HEAD)
+              echo "- $slicer: $sha"
+            done
+          } > dist/upstream-versions.md
+
+      - name: Publish to profiles-data branch
+        run: |
+          git config user.name "slicer-profile-bridge-bot"
+          git config user.email "bot@admeshio.com"
+          if git ls-remote --exit-code origin profiles-data >/dev/null 2>&1; then
+            git fetch origin profiles-data:profiles-data
+          fi
+          git worktree add /tmp/data profiles-data 2>/dev/null \
+              || git worktree add -b profiles-data /tmp/data
+          rm -rf /tmp/data/*
+          cp dist/* /tmp/data/
+          cd /tmp/data
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes — upstream profiles unchanged since last run"
+            exit 0
+          fi
+          git commit -m "sync: canonical profiles from upstream $(date -u +%Y-%m-%d)"
+          git push origin profiles-data
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-profiles
+          path: dist/
+          retention-days: 90

@@ -48,6 +48,21 @@ from slicer_profile_bridge.schema import (
     SupportSettings,
 )
 
+# Metadata keys we strip from the raw_data pass-through. Different from
+# Orca's set because Prusa exposes extra bookkeeping fields in its INI
+# (setting_id, renamed_from, compatible_printers_condition — the last
+# one is an expression, not an identifier list, and shouldn't be mixed
+# into consumer queries).
+_METADATA_KEYS: frozenset[str] = frozenset({
+    "type", "name", "inherits", "from", "setting_id", "instantiation",
+    "filament_id", "description", "renamed_from",
+})
+
+
+def _strip_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in data.items() if k not in _METADATA_KEYS}
+
+
 # ── Primitive coercion ────────────────────────────────────────────────
 # Prusa INI values are raw strings. Multi-extruder fields come as
 # comma-separated `"0.4,0.4"`; percentage fields as `"70%"`. Helpers
@@ -328,6 +343,7 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
         max_feedrate_mm_s=axis_feed,
         max_accel_mm_s2=axis_accel,
         source=source,
+        raw_data=_strip_metadata(data),
     )
 
 
@@ -405,6 +421,7 @@ def translate_filament(resolved: ResolvedProfile) -> CanonicalFilament:
         cooling=cooling,
         retraction=retraction,
         source=source,
+        raw_data=_strip_metadata(data),
     )
 
 
@@ -424,9 +441,12 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
     speeds = ProcessSpeeds(
         perimeter=_to_float(data.get("perimeter_speed")),
         external_perimeter=_to_float(data.get("external_perimeter_speed")),
+        small_perimeter=_to_float(data.get("small_perimeter_speed")),
         infill=_to_float(data.get("infill_speed")),
         solid_infill=_to_float(data.get("solid_infill_speed")),
         top_solid_infill=_to_float(data.get("top_solid_infill_speed")),
+        gap_infill=_to_float(data.get("gap_fill_speed")),
+        bridge=_to_float(data.get("bridge_speed")),
         support=_to_float(data.get("support_material_speed")),
         travel=_to_float(data.get("travel_speed")),
         first_layer=_to_float(data.get("first_layer_speed")),
@@ -480,10 +500,12 @@ def translate_process(resolved: ResolvedProfile) -> CanonicalProcess:
         infill_pattern=infill_pattern,
         raw_infill_pattern=raw_pattern if infill_pattern is InfillPattern.OTHER else None,
         speed_mm_s=speeds,
+        default_acceleration_mm_s2=_to_float(data.get("default_acceleration")),
         support=support,
         adhesion=adhesion,
         seam_position=_normalise_seam(_to_str(data.get("seam_position"))),
         source=source,
+        raw_data=_strip_metadata(data),
     )
 
 

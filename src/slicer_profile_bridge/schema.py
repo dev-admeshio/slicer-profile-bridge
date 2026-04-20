@@ -18,7 +18,7 @@ Design notes:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, PositiveFloat
 
@@ -199,15 +199,21 @@ class RetractionSettings(_StrictModel):
 
 class ProcessSpeeds(_StrictModel):
     """Slicing speeds in mm/s. Present fields are the common denominators
-    across Orca / Prusa / Bambu; vendor-specific speeds (e.g. ironing,
-    gap-fill) are not surfaced here to keep the canonical lean.
+    across Orca / Prusa / Bambu and cover the speeds a downstream auditor
+    typically uses (seam placement risk, cooling budget, retraction
+    stress). Vendor-only speeds that no audit consumer we know of reads
+    (ironing, arachne perimeter ramp, etc.) stay in `raw_data` — they're
+    accessible but not promoted to first-class fields.
     """
 
     perimeter: PositiveFloat | None = None
     external_perimeter: PositiveFloat | None = None
+    small_perimeter: PositiveFloat | None = None
     infill: PositiveFloat | None = None
     solid_infill: PositiveFloat | None = None
     top_solid_infill: PositiveFloat | None = None
+    gap_infill: PositiveFloat | None = None
+    bridge: PositiveFloat | None = None
     support: PositiveFloat | None = None
     travel: PositiveFloat | None = None
     first_layer: PositiveFloat | None = None
@@ -274,6 +280,12 @@ class CanonicalPrinter(_StrictModel):
 
     source: SourceMetadata
 
+    # Escape hatch: full merged vendor payload, minus the metadata keys
+    # (`type`, `name`, `inherits`, `setting_id`, etc.). Gives consumers
+    # read-access to vendor fields the canonical schema doesn't promote
+    # to first-class. Read-only by convention; writes won't round-trip.
+    raw_data: dict[str, Any] = Field(default_factory=dict)
+
 
 class CanonicalFilament(_StrictModel):
     """A material as configured for extrusion or exposure."""
@@ -308,6 +320,7 @@ class CanonicalFilament(_StrictModel):
     bottom_layer_count: Annotated[int, Field(ge=0)] | None = None
 
     source: SourceMetadata
+    raw_data: dict[str, Any] = Field(default_factory=dict)
 
 
 class CanonicalProcess(_StrictModel):
@@ -342,6 +355,7 @@ class CanonicalProcess(_StrictModel):
 
     # Motion
     speed_mm_s: ProcessSpeeds | None = None
+    default_acceleration_mm_s2: PositiveFloat | None = None
 
     # Support structure
     support: SupportSettings | None = None
@@ -352,7 +366,13 @@ class CanonicalProcess(_StrictModel):
     # Seam
     seam_position: SeamPosition = SeamPosition.UNKNOWN
 
+    # Process-level retraction override (some slicers let a process
+    # override the filament-level retraction length on a per-material
+    # basis — PrusaSlicer exposes this, Orca does via Tree Support).
+    retraction_overrides: RetractionSettings | None = None
+
     source: SourceMetadata
+    raw_data: dict[str, Any] = Field(default_factory=dict)
 
 
 class CanonicalRecipe(_StrictModel):
