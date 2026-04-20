@@ -21,6 +21,13 @@ there, this file is the human-readable companion.
   `source: SourceMetadata` block with the slicer name, version, vendor
   directory, original ID, and the `inherits` chain that produced the
   effective values.
+- **`raw_data` for unmapped fields** (added in 0.2.0). Every top-level
+  model carries `raw_data: dict[str, Any]` that holds the full merged
+  vendor payload minus profile-metadata keys. Consumers needing a
+  vendor-specific field the canonical schema doesn't promote to
+  first-class (e.g. Orca's `fan_direction`, Prusa's
+  `support_material_xy_spacing`) can reach it without a bridge PR. The
+  first-class schema is for the 95 % case; `raw_data` covers the rest.
 
 ## Three top-level objects
 
@@ -68,6 +75,7 @@ A `CanonicalRecipe` bundles one of each plus sits on top of
 | `lcd_resolution_px` | `tuple[int, int]?` | Resin | |
 | `z_step_mm` | `float?` | Resin | |
 | `source` | `SourceMetadata` | ✓ | Traceability. |
+| `raw_data` | `dict[str, Any]` | default `{}` | Full merged vendor payload minus profile-metadata keys. Read-only. |
 
 ## CanonicalFilament
 
@@ -94,6 +102,7 @@ A `CanonicalRecipe` bundles one of each plus sits on top of
 | `bottom_exposure_time_s` | `float?` | Resin | |
 | `bottom_layer_count` | `int?` | Resin | |
 | `source` | `SourceMetadata` | ✓ | |
+| `raw_data` | `dict[str, Any]` | default `{}` | Full merged vendor payload minus profile-metadata keys. |
 
 ## CanonicalProcess
 
@@ -114,10 +123,33 @@ A `CanonicalRecipe` bundles one of each plus sits on top of
 | `infill_pattern` | `InfillPattern` | default `other` | |
 | `raw_infill_pattern` | `str?` | | Original vendor name when mapped to `other`. |
 | `speed_mm_s` | `ProcessSpeeds?` | | |
+| `default_acceleration_mm_s2` | `float?` | | Process-level acceleration default. |
 | `support` | `SupportSettings?` | | |
 | `adhesion` | `AdhesionSettings?` | | Skirt / brim / raft. |
 | `seam_position` | `SeamPosition` | default `unknown` | |
+| `retraction_overrides` | `RetractionSettings?` | | Process-level retract override, when the vendor allows it. |
 | `source` | `SourceMetadata` | ✓ | |
+| `raw_data` | `dict[str, Any]` | default `{}` | Full merged vendor payload minus profile-metadata keys. |
+
+### ProcessSpeeds
+
+All in mm/s. None are required — a slicer that doesn't declare a given
+speed leaves the field `None` instead of defaulting.
+
+| Field | Notes |
+|---|---|
+| `perimeter` | Inner-wall speed. |
+| `external_perimeter` | Outer-wall speed. |
+| `small_perimeter` | Speed for short perimeters; often throttled for quality. |
+| `infill` | Sparse infill. |
+| `solid_infill` | Solid infill layers (not top). |
+| `top_solid_infill` | Top solid surface. |
+| `gap_infill` | Gap-fill between adjacent extrusions. |
+| `bridge` | Bridge spans. |
+| `support` | Support structures. |
+| `travel` | Non-extruding moves. |
+| `first_layer` | First layer. |
+| `first_layer_infill` | First-layer infill (when separately tuned). |
 
 ## SourceMetadata
 

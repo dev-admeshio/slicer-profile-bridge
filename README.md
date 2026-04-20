@@ -7,7 +7,10 @@ Use it as a library to read whatever profiles a user has installed in any
 supported slicer, expose them through one stable shape, and avoid
 reinventing per-vendor parsing in every downstream tool.
 
-**Status**: alpha — schema under active design. Phase 1 (Orca) in progress.
+**Status**: v0.2.0 — three translators shipped (Orca / Prusa / Bambu),
+daily upstream sync workflow wired up, `raw_data` escape hatch for any
+vendor field the canonical schema doesn't promote. Schema stays `0.x`
+until a third external consumer stress-tests the shape.
 
 ## Why this exists
 
@@ -102,13 +105,38 @@ spb list --from orca --root /path/to/OrcaSlicer/resources/profiles
 
 | Slicer | Status | Notes |
 |---|---|---|
-| OrcaSlicer | Phase 1 — in progress | Primary target |
-| PrusaSlicer | Phase 2 — planned | Handles both JSON and legacy INI |
-| BambuStudio | Phase 3 — planned | Orca fork, near-identical schema |
+| OrcaSlicer | ✓ shipped (0.1.0) | Primary target — full field mapping. |
+| PrusaSlicer | ✓ shipped (0.1.0) | Multi-section INI + multi-parent inheritance. |
+| BambuStudio | ✓ shipped (0.1.0) | Orca fork — shares the translator, differs only in the source label. |
+| Cura | planned | Welcome community translator PRs. |
+| Lychee / ChiTuBox | planned | Resin-focused; needs dedicated fixture corpus first. |
 
-Adding a new translator: implement `translate_printer`, `translate_filament`,
-and `translate_process` functions that return canonical models. See
-[`docs/contributing.md`](docs/contributing.md) (coming) for details.
+Adding a new translator: see [`src/slicer_profile_bridge/translators/README.md`](src/slicer_profile_bridge/translators/README.md)
+for the contract and conventions. Every translator ships three
+per-profile functions and one loader, with fixtures in
+`tests/fixtures/<slicer>/`.
+
+## Daily sync workflow
+
+`.github/workflows/sync-upstream.yml` runs at 06:00 UTC daily,
+shallow-clones the three upstream slicer repos, translates every
+profile into a single `canonical-profiles.json` (~36 MB), and publishes
+to the `profiles-data` branch and as a GitHub release artifact.
+Downstream consumers pin a tag or pull the latest commit on
+`profiles-data` to get fresh vendor data without running the bridge
+themselves.
+
+## Who uses this
+
+- [Admeshio](https://admeshio.com) — pre-print audit platform. Backend
+  loads the canonical snapshot at boot to power its printer / filament
+  / process dropdown, maps user selections to Admeshio's engine recipes
+  via a substring table, falls back to generic FDM when no first-party
+  recipe covers the chosen printer. Integration surface:
+  `interfaces/web/backend/app/services/profile_catalog.py`.
+
+Using this in your project? Open an issue or PR — helps us scope the
+1.0 schema lock around real-world needs.
 
 ## Profile sources
 
