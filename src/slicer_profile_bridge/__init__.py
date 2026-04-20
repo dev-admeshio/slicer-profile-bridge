@@ -21,6 +21,7 @@ from slicer_profile_bridge.schema import (
     RetractionType,
     SupportSettings,
 )
+from slicer_profile_bridge.translators import load_orca
 
 __version__ = "0.1.0"
 
@@ -38,4 +39,5 @@ __all__ = [
     "RetractionType",
     "SupportSettings",
     "__version__",
+    "load_orca",
 ]
