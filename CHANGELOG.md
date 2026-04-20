@@ -9,6 +9,22 @@ this project follows [semver](https://semver.org/). Everything on the
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-04-20
+
+### Fixed
+
+- `scripts/sync_upstream.py` used `datetime.UTC`, which was added in
+  Python 3.11. The project declares `requires-python = ">=3.10"`, so the
+  nightly sync workflow would have crashed on a 3.10 runner. Replaced
+  with `datetime.timezone.utc` (available since 3.2). `canonical-profiles.json`
+  output is byte-identical.
+
+### Changed
+
+- CI now runs `ruff check` and `mypy --strict` against `scripts/` as
+  well as `src/` — the `dt.UTC` regression slipped through because
+  the sync helper wasn't in the type-checked set.
+
 ## [0.2.0] — 2026-04-20
 
 ### Added

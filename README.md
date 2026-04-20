@@ -7,7 +7,7 @@ Use it as a library to read whatever profiles a user has installed in any
 supported slicer, expose them through one stable shape, and avoid
 reinventing per-vendor parsing in every downstream tool.
 
-**Status**: v0.2.0 — three translators shipped (Orca / Prusa / Bambu),
+**Status**: v0.2.1 — three translators shipped (Orca / Prusa / Bambu),
 daily upstream sync workflow wired up, `raw_data` escape hatch for any
 vendor field the canonical schema doesn't promote. Schema stays `0.x`
 until a third external consumer stress-tests the shape.
