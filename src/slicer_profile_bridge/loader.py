@@ -35,9 +35,34 @@ class RawProfile:
 
     @property
     def inherits(self) -> str | None:
-        """Name of the parent profile this one derives from, or None."""
+        """First parent's name (single-inheritance compatibility).
+
+        For slicers that only support one parent (Orca's JSON format),
+        this is the whole story. For PrusaSlicer's INI format, where
+        `inherits = a; b` is legal, prefer `inherits_all` — this property
+        returns the first name so single-parent call sites still work.
+        """
+        names = self.inherits_all
+        return names[0] if names else None
+
+    @property
+    def inherits_all(self) -> list[str]:
+        """All parent profile names, in declaration order.
+
+        Orca JSON always has at most one; Prusa INI can have several
+        separated by `;`. Empty list means no inheritance.
+        """
         value = self.data.get("inherits")
-        return value if isinstance(value, str) and value else None
+        if not value:
+            return []
+        if isinstance(value, list):
+            return [str(x).strip() for x in value if str(x).strip()]
+        if isinstance(value, str):
+            # Prusa uses `;` to separate parents; single-parent callers
+            # get a one-element list back.
+            parts = [p.strip() for p in value.split(";")]
+            return [p for p in parts if p]
+        return []
 
     @property
     def instantiation(self) -> bool:
@@ -153,5 +178,100 @@ def index_directory(root: str | Path) -> RawProfileIndex:
         # If the same name appears twice (user override of a system
         # profile, or a duplicate ship), the later one wins. Callers who
         # need to distinguish can inspect RawProfile.path.
+        store[profile.name] = profile
+    return index
+
+
+# ── INI bundle loader (PrusaSlicer) ────────────────────────────────────
+# PrusaSlicer distributes profiles as a single multi-section INI per
+# vendor (`PrusaResearch.ini`, `Creality.ini`, ...) instead of one file
+# per profile. Sections are headed `[<type>:<name>]` where type is one
+# of `printer`, `filament`, `print` (our canonical "process"). We parse
+# with a stdlib-light hand-rolled scanner rather than `configparser`
+# because Prusa uses ambiguous characters in both section names (`:`,
+# `.`) and values (`;` as parent separator, `=` inside expressions).
+
+
+def _iter_ini_sections(path: Path) -> list[tuple[str, dict[str, str]]]:
+    """Return [(section_header, {key: value}), ...] for a Prusa-style INI.
+
+    Section headers keep the original form with brackets, e.g.
+    `"[printer:Original Prusa MK4 0.4 nozzle]"`. Keys are lowercased
+    preserving underscores; values are stripped of surrounding whitespace
+    but otherwise left intact (so `"0x0,250x0"` and `"70%"` survive).
+    """
+    sections: list[tuple[str, dict[str, str]]] = []
+    current_header: str | None = None
+    current_body: dict[str, str] = {}
+    with path.open("r", encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.rstrip("\r\n")
+            stripped = line.strip()
+            if not stripped or stripped[0] in ("#", ";"):
+                continue
+            if stripped.startswith("[") and stripped.endswith("]"):
+                if current_header is not None:
+                    sections.append((current_header, current_body))
+                current_header = stripped
+                current_body = {}
+                continue
+            if current_header is None:
+                continue
+            eq = line.find("=")
+            if eq < 0:
+                continue
+            key = line[:eq].strip().lower()
+            value = line[eq + 1 :].strip()
+            if key:
+                current_body[key] = value
+    if current_header is not None:
+        sections.append((current_header, current_body))
+    return sections
+
+
+def load_ini_bundle(path: str | Path, vendor: str | None = None) -> list[RawProfile]:
+    """Parse one Prusa-style INI file into a list of RawProfile objects.
+
+    Section types other than `printer` / `filament` / `print` (notably
+    `vendor` and `printer_model`) are dropped — they describe the bundle,
+    not individual profiles.
+    """
+    p = Path(path).expanduser().resolve()
+    resolved_vendor = vendor or p.stem
+    profiles: list[RawProfile] = []
+    for header, body in _iter_ini_sections(p):
+        # Header shape: `[<type>:<name>]`. Split on the first colon only
+        # because names routinely contain colons in date / version
+        # decorations (e.g. `MK4:0.4`).
+        inner = header[1:-1]
+        if ":" not in inner:
+            continue
+        raw_type, name = inner.split(":", 1)
+        ptype = _normalise_type(raw_type)
+        if ptype is None:
+            continue
+        name = name.strip()
+        if not name:
+            continue
+        profiles.append(
+            RawProfile(
+                type=ptype,
+                name=name,
+                vendor=resolved_vendor,
+                path=p,
+                data=dict(body),
+            )
+        )
+    return profiles
+
+
+def index_ini_file(path: str | Path, vendor: str | None = None) -> RawProfileIndex:
+    """Build a RawProfileIndex out of one Prusa-style multi-section INI."""
+    raw_path = Path(path).expanduser().resolve()
+    if not raw_path.is_file():
+        raise FileNotFoundError(f"INI bundle not found: {raw_path}")
+    index = RawProfileIndex(root=raw_path.parent)
+    for profile in load_ini_bundle(raw_path, vendor=vendor):
+        store = index._store_for(profile.type)  # noqa: SLF001
         store[profile.name] = profile
     return index

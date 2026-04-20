@@ -21,7 +21,7 @@ from slicer_profile_bridge.schema import (
     RetractionType,
     SupportSettings,
 )
-from slicer_profile_bridge.translators import load_orca
+from slicer_profile_bridge.translators import load_orca, load_prusa, load_prusa_ini
 
 __version__ = "0.1.0"
 
@@ -40,4 +40,6 @@ __all__ = [
     "SupportSettings",
     "__version__",
     "load_orca",
+    "load_prusa",
+    "load_prusa_ini",
 ]

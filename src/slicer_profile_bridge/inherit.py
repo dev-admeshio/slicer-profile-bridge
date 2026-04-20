@@ -53,44 +53,61 @@ class ResolvedProfile:
 
 
 def resolve(profile: RawProfile, index: RawProfileIndex) -> ResolvedProfile:
-    """Walk `profile.inherits` until we hit a root (no `inherits`), then
-    fold each layer into the merged dict from root → child.
+    """Flatten a profile's inheritance into effective values.
 
-    Child values win over parent values, except when the child value is
-    the `nil` sentinel (in which case the parent's value carries through).
+    Supports both shapes:
+      * Single-parent chain (Orca JSON: `"inherits": "parent"`).
+      * Multi-parent merge (Prusa INI: `inherits = a; b`). Parents are
+        applied left-to-right, so a later parent overrides an earlier
+        parent for keys both declare. The profile itself overrides all
+        parents last.
+
+    The merge pre-strips `nil` sentinels from each layer so a child can
+    opt out of an override by writing `"nil"` instead of the value.
+
+    Cycles in the inherits DAG are detected per recursion and silently
+    broken — the partial resolution continues instead of raising so one
+    bad user profile doesn't sink a bulk load.
     """
-    chain: list[RawProfile] = []
-    seen: set[str] = set()
+    cache: dict[str, dict[str, Any]] = {}
+    chain_accumulator: list[str] = []
+    seen_during_walk: set[str] = set()
 
-    current: RawProfile | None = profile
-    while current is not None:
-        if current.name in seen:
-            break  # cycle — abort, use what we have so far
-        seen.add(current.name)
-        chain.append(current)
-        parent_name = current.inherits
-        if parent_name is None:
-            break
-        current = index.get(profile.type, parent_name)
+    def _resolve_layer(p: RawProfile) -> dict[str, Any]:
+        if p.name in cache:
+            return cache[p.name]
+        if p.name in seen_during_walk:
+            return {}  # cycle — drop this branch
+        seen_during_walk.add(p.name)
 
-    # Merge root → child so child wins last. `chain` is child-first, so
-    # iterate reversed.
-    merged: dict[str, Any] = {}
-    for layer in reversed(chain):
-        for key, value in layer.data.items():
+        merged: dict[str, Any] = {}
+        for parent_name in p.inherits_all:
+            parent = index.get(profile.type, parent_name)
+            if parent is None:
+                continue
+            # Record the parent BEFORE recursing — the chain goes
+            # immediate-first, root-last, matching how humans read
+            # ancestry ("this inherits from X which inherits from Y").
+            if parent_name not in chain_accumulator and parent is not profile:
+                chain_accumulator.append(parent_name)
+            parent_data = _resolve_layer(parent)
+            merged.update(parent_data)
+
+        for key, value in p.data.items():
             if _is_nil_value(value):
                 continue
             merged[key] = value
 
-    # Parent chain for source metadata: everyone except the profile
-    # itself, in root-last order (matches how git ancestors are usually
-    # written — immediate parent first, root at the end).
-    parents = [p.name for p in chain[1:]]
+        seen_during_walk.discard(p.name)
+        cache[p.name] = merged
+        return merged
+
+    merged_data = _resolve_layer(profile)
 
     return ResolvedProfile(
         type=profile.type,
         name=profile.name,
         vendor=profile.vendor,
-        data=merged,
-        inherits_chain=parents,
+        data=merged_data,
+        inherits_chain=chain_accumulator,
     )
