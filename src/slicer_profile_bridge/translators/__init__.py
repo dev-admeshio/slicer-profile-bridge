@@ -8,7 +8,8 @@ testability.
 
 from __future__ import annotations
 
+from slicer_profile_bridge.translators.bambu import load_bambu
 from slicer_profile_bridge.translators.orca import load_orca
 from slicer_profile_bridge.translators.prusa import load_prusa, load_prusa_ini
 
-__all__ = ["load_orca", "load_prusa", "load_prusa_ini"]
+__all__ = ["load_bambu", "load_orca", "load_prusa", "load_prusa_ini"]
