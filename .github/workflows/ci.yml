@@ -26,10 +26,10 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check src tests
+        run: ruff check src tests scripts
 
       - name: Type check
-        run: mypy src
+        run: mypy src scripts
 
       - name: Test
         run: pytest

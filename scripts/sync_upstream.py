@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = {
         "schema_version": 1,
-        "generated_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "slicers": {name: _bundle_to_dict(b) for name, b in bundles.items()},
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
