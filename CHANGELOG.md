@@ -9,6 +9,37 @@ this project follows [semver](https://semver.org/). Everything on the
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-04-21
+
+Derived-field release. The `enclosure_required` field on
+`CanonicalFilament` was declared in v0.2.0 but had no extractor, so
+every downstream consumer saw `False` even for ABS with bed 110°C.
+
+### Added
+- `slicer_profile_bridge.heuristics.infer_filament_enclosure_required()`
+  — shared derivation used by every translator. Three gates in OR:
+  normalised category membership (abs/asa/pc/pa*/pet_cf/peek/pei),
+  bed_temp_normal_c ≥ 95°C, and name substring hints (ABS/ASA/Nylon/PA-/
+  PEEK/PEI/ULTEM).
+
+### Changed
+- `translators/orca.translate_filament()` and
+  `translators/prusa.translate_filament()` now set
+  `CanonicalFilament.enclosure_required` via the shared helper.
+  BambuStudio inherits the fix transparently — its translator delegates
+  to Orca.
+
+### Tests
+- `tests/test_heuristics.py` — 21 parametrised cases covering all three
+  gates individually, combined-gate behaviour, missing-data fallbacks,
+  and substring false-positive canaries. Helper coverage 100%.
+
+### Consumer impact
+Admeshio engine rule `WARP_RISK_NO_ENCLOSURE` (v1-dev) was built with a
+dual gate (bed_temp_max > 100°C runtime proxy OR this flag) precisely
+because this field was unreliable. With 0.3.1 the profile leg becomes
+the primary signal; the runtime proxy stays as defense-in-depth.
+
 ## [0.3.0] — 2026-04-20
 
 Audit trust release. Adds the motion-tuning + custom-gcode + filament-

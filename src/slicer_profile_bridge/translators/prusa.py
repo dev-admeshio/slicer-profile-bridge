@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from slicer_profile_bridge.heuristics import infer_filament_enclosure_required
 from slicer_profile_bridge.inherit import ResolvedProfile, resolve
 from slicer_profile_bridge.loader import (
     RawProfileIndex,
@@ -459,6 +460,11 @@ def translate_filament(resolved: ResolvedProfile) -> CanonicalFilament:
         filament_diameter_mm=_to_float(data.get("filament_diameter")),
         cooling=cooling,
         retraction=retraction,
+        enclosure_required=infer_filament_enclosure_required(
+            category=category,
+            bed_temp_normal_c=bed_normal,
+            name=resolved.name,
+        ),
         source=source,
         raw_data=_strip_metadata(data),
     )
