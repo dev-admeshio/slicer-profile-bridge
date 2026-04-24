@@ -143,18 +143,42 @@ def _to_str_semi_list(value: Any) -> list[str]:
 _FILAMENT_CATEGORY_MAP = {
     "pla": FilamentCategory.PLA,
     "pla+": FilamentCategory.PLA,
+    "pla-cf": FilamentCategory.PLA_CF,
+    "pla cf": FilamentCategory.PLA_CF,
     "petg": FilamentCategory.PETG,
     "pet": FilamentCategory.PETG,
+    "petg-cf": FilamentCategory.PET_CF,
+    "petg cf": FilamentCategory.PET_CF,
+    "pet-cf": FilamentCategory.PET_CF,
     "abs": FilamentCategory.ABS,
+    "abs-gf": FilamentCategory.ABS_GF,
+    "abs gf": FilamentCategory.ABS_GF,
     "asa": FilamentCategory.ASA,
     "flex": FilamentCategory.TPU,
     "tpu": FilamentCategory.TPU,
     "pa": FilamentCategory.PA,
     "nylon": FilamentCategory.PA,
+    "pa6": FilamentCategory.PA,
+    "pa12": FilamentCategory.PA,
+    # Fibre-reinforced polyamides -- see orca.py map for family notes.
+    "pa-cf": FilamentCategory.PA_CF,
+    "pa cf": FilamentCategory.PA_CF,
+    "pa6-cf": FilamentCategory.PA_CF,
+    "pa12-cf": FilamentCategory.PA_CF,
+    "paht": FilamentCategory.PA_CF,
+    "paht-cf": FilamentCategory.PA_CF,
+    "pa-gf": FilamentCategory.PA_GF,
+    "pa gf": FilamentCategory.PA_GF,
+    # Polyphthalamide family
+    "ppa": FilamentCategory.PPA,
+    "ppa-cf": FilamentCategory.PPA_CF,
+    "ppa cf": FilamentCategory.PPA_CF,
+    "ppa-gf": FilamentCategory.PPA_GF,
     "pc": FilamentCategory.PC,
     "hips": FilamentCategory.HIPS,
     "pva": FilamentCategory.PVA,
     "pvb": FilamentCategory.PVB,
+    "bvoh": FilamentCategory.BVOH,
 }
 
 
@@ -164,9 +188,13 @@ def _normalise_filament_category(raw: str | None) -> FilamentCategory:
     key = raw.strip().lower()
     if key in _FILAMENT_CATEGORY_MAP:
         return _FILAMENT_CATEGORY_MAP[key]
-    for prefix, cat in _FILAMENT_CATEGORY_MAP.items():
-        if key.startswith(prefix + " ") or key.startswith(prefix + "-"):
-            return cat
+    # Longest-prefix match so "pa-cf" wins over "pa" when the raw is
+    # "PA-CF Pro". Separator can be space, dash, or underscore.
+    sorted_keys = sorted(_FILAMENT_CATEGORY_MAP.keys(), key=len, reverse=True)
+    for prefix in sorted_keys:
+        for sep in (" ", "-", "_"):
+            if key.startswith(prefix + sep):
+                return _FILAMENT_CATEGORY_MAP[prefix]
     return FilamentCategory.OTHER
 
 

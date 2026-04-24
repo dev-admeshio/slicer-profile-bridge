@@ -86,6 +86,20 @@ class FilamentCategory(str, Enum):
     PVB = "pvb"
     PET_CF = "pet_cf"
     PLA_CF = "pla_cf"
+    # Glass / carbon fibre reinforced variants of the warp-prone families.
+    # Added 2026-04-24 -- vendor catalog survey found 348 Bambu + 752 Orca
+    # filaments falling into FilamentCategory.OTHER because PA-CF, PA-GF,
+    # ABS-GF, PPA-CF, PPA-GF etc. had no dedicated bucket. OTHER triggers
+    # the empty overlay on the Admeshio side, which silences MATERIAL_DRYING,
+    # HARDENED_NOZZLE_REQUIRED, MATERIAL_WARPING on the very materials that
+    # need those warnings most.
+    PA_CF = "pa_cf"
+    PA_GF = "pa_gf"
+    ABS_GF = "abs_gf"
+    PPA = "ppa"
+    PPA_CF = "ppa_cf"
+    PPA_GF = "ppa_gf"
+    BVOH = "bvoh"
     STD_RESIN = "std_resin"
     WATER_WASHABLE_RESIN = "water_washable_resin"
     TOUGH_RESIN = "tough_resin"

@@ -142,7 +142,10 @@ _FILAMENT_CATEGORY_MAP = {
     "pet": FilamentCategory.PETG,
     "petg cf": FilamentCategory.PET_CF,
     "pet-cf": FilamentCategory.PET_CF,
+    "petg-cf": FilamentCategory.PET_CF,
     "abs": FilamentCategory.ABS,
+    "abs-gf": FilamentCategory.ABS_GF,
+    "abs gf": FilamentCategory.ABS_GF,
     "asa": FilamentCategory.ASA,
     "tpu": FilamentCategory.TPU,
     "tpu 95a": FilamentCategory.TPU,
@@ -151,10 +154,30 @@ _FILAMENT_CATEGORY_MAP = {
     "nylon": FilamentCategory.PA,
     "pa6": FilamentCategory.PA,
     "pa12": FilamentCategory.PA,
+    # Fibre-reinforced polyamides. Vendor taxonomies use all of these forms
+    # interchangeably: "PA-CF", "PA CF", "PA6-CF", "PA12-CF", "PAHT-CF".
+    "pa-cf": FilamentCategory.PA_CF,
+    "pa cf": FilamentCategory.PA_CF,
+    "pa6-cf": FilamentCategory.PA_CF,
+    "pa12-cf": FilamentCategory.PA_CF,
+    "paht": FilamentCategory.PA_CF,      # Bambu PAHT family is CF-filled by default
+    "paht-cf": FilamentCategory.PA_CF,
+    "paht cf": FilamentCategory.PA_CF,
+    "pa-gf": FilamentCategory.PA_GF,
+    "pa gf": FilamentCategory.PA_GF,
+    "pa6-gf": FilamentCategory.PA_GF,
+    "pa12-gf": FilamentCategory.PA_GF,
+    # Polyphthalamide family (warp-prone engineering plastic)
+    "ppa": FilamentCategory.PPA,
+    "ppa-cf": FilamentCategory.PPA_CF,
+    "ppa cf": FilamentCategory.PPA_CF,
+    "ppa-gf": FilamentCategory.PPA_GF,
+    "ppa gf": FilamentCategory.PPA_GF,
     "pc": FilamentCategory.PC,
     "hips": FilamentCategory.HIPS,
     "pva": FilamentCategory.PVA,
     "pvb": FilamentCategory.PVB,
+    "bvoh": FilamentCategory.BVOH,
 }
 
 
@@ -164,10 +187,15 @@ def _normalise_filament_category(raw: str | None) -> FilamentCategory:
     key = raw.strip().lower()
     if key in _FILAMENT_CATEGORY_MAP:
         return _FILAMENT_CATEGORY_MAP[key]
-    # Try looser match — "PLA Aero" → PLA, "ABS Plus" → ABS
-    for prefix, cat in _FILAMENT_CATEGORY_MAP.items():
-        if key.startswith(prefix + " "):
-            return cat
+    # Try looser match — "PLA Aero" → PLA, "PA-CF Pro" → PA_CF.
+    # Accept space, dash, or underscore as separator (vendor names use
+    # all three: "PLA Aero", "ABS-GF", "petg_cf"). Match longest prefix
+    # first so "pa-cf" wins over "pa" when the raw string is "pa-cf xyz".
+    sorted_keys = sorted(_FILAMENT_CATEGORY_MAP.keys(), key=len, reverse=True)
+    for prefix in sorted_keys:
+        for sep in (" ", "-", "_"):
+            if key.startswith(prefix + sep):
+                return _FILAMENT_CATEGORY_MAP[prefix]
     return FilamentCategory.OTHER
 
 
