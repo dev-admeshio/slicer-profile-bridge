@@ -33,6 +33,7 @@ from slicer_profile_bridge import (
     load_orca,
     load_prusa,
 )
+from slicer_profile_bridge.translators.prusa import load_uvtools_assets
 
 
 def _bundle_to_dict(bundle: ProfileBundle) -> dict[str, Any]:
@@ -56,23 +57,38 @@ def _summary_row(slicer: str, bundle: ProfileBundle) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--orca", type=Path, required=True,
+    parser.add_argument("--orca", type=Path, required=False,
                         help="OrcaSlicer resources/profiles directory")
-    parser.add_argument("--prusa", type=Path, required=True,
+    parser.add_argument("--prusa", type=Path, required=False,
                         help="PrusaSlicer resources/profiles directory")
-    parser.add_argument("--bambu", type=Path, required=True,
+    parser.add_argument("--bambu", type=Path, required=False,
                         help="BambuStudio resources/profiles directory")
+    parser.add_argument("--uvtools-assets", type=Path, required=False,
+                        help="UVtools Assets/PrusaSlicer/ directory — "
+                             "lifts the bundled SLA printer profiles into "
+                             "a 'uvtools' bundle in the same canonical "
+                             "JSON snapshot.")
     parser.add_argument("--output", type=Path, required=True,
                         help="canonical-profiles.json output path")
     parser.add_argument("--summary", type=Path,
                         help="Optional Markdown summary path (sync stats)")
     args = parser.parse_args(argv)
 
-    bundles: dict[str, ProfileBundle] = {
-        "orca":  load_orca(args.orca),
-        "prusa": load_prusa(args.prusa),
-        "bambu": load_bambu(args.bambu),
-    }
+    bundles: dict[str, ProfileBundle] = {}
+    if args.orca is not None:
+        bundles["orca"] = load_orca(args.orca)
+    if args.prusa is not None:
+        bundles["prusa"] = load_prusa(args.prusa)
+    if args.bambu is not None:
+        bundles["bambu"] = load_bambu(args.bambu)
+    if args.uvtools_assets is not None:
+        # Lift UVtools-bundled SLA printers into a separate "uvtools"
+        # bundle so consumers can opt in to the resin set without
+        # cross-contaminating PrusaSlicer's own FDM bundle index.
+        bundles["uvtools"] = load_uvtools_assets(args.uvtools_assets)
+    if not bundles:
+        parser.error("at least one of --orca / --prusa / --bambu / "
+                     "--uvtools-assets is required")
 
     payload = {
         "schema_version": 1,

@@ -278,6 +278,37 @@ class SourceMetadata(_StrictModel):
     inherits_chain: list[str] = Field(default_factory=list)
 
 
+class PeelCycle(_StrictModel):
+    """Resin printer peel-cycle parameters (LCD / MSLA / DLP).
+
+    Speeds preserved in the slicer-UI-native unit (mm/min). Most resin
+    slicers display Lift Speed / Retract Speed in mm/min and we don't
+    want to lose precision on the round-trip into a downstream
+    consumer's UI. Convert to mm/s at the consumer boundary if needed.
+
+    Fields are Optional because PrusaSlicer SLA profiles encode some of
+    them as free-text inside `printer_notes` (Anycubic et al.) while
+    others come straight from declared keys. A translator may legitimately
+    only fill the values the source vendor actually published.
+    """
+
+    lift_height_mm: PositiveFloat | None = None
+    lift_speed_mm_min: PositiveFloat | None = None
+    retract_speed_mm_min: PositiveFloat | None = None
+    bottom_lift_height_mm: PositiveFloat | None = None
+    bottom_lift_speed_mm_min: PositiveFloat | None = None
+    bottom_retract_speed_mm_min: PositiveFloat | None = None
+    light_pwm: Annotated[int, Field(ge=0, le=255)] | None = None
+    bottom_light_pwm: Annotated[int, Field(ge=0, le=255)] | None = None
+    # Tilt-bed printers (Prusa SL1, some Phrozen) replace the lift cycle
+    # with a tilt motion. Tilt time is in seconds; mutually exclusive
+    # with lift_*_mm in practice but we don't enforce that — a hybrid
+    # printer could theoretically declare both.
+    fast_tilt_time_s: PositiveFloat | None = None
+    slow_tilt_time_s: PositiveFloat | None = None
+    wait_time_before_cure_s: NonNegativeFloat | None = None
+
+
 # ── Top-level canonical models ────────────────────────────────────────
 
 
@@ -324,6 +355,12 @@ class CanonicalPrinter(_StrictModel):
     pixel_size_mm: PositiveFloat | None = None
     lcd_resolution_px: tuple[int, int] | None = None
     z_step_mm: PositiveFloat | None = None
+    # Resin peel-cycle parameters. Populated for RESIN_MSLA printers
+    # when the source profile declares them; None otherwise. Anycubic
+    # / Elegoo / Phrozen profiles in PrusaSlicer SLA INI bundle these
+    # inside the `printer_notes` `START_CUSTOM_VALUES` block — the
+    # translator parses that block and surfaces the values here.
+    peel_cycle: PeelCycle | None = None
 
     source: SourceMetadata
 

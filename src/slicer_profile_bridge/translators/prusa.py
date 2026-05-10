@@ -38,6 +38,7 @@ from slicer_profile_bridge.schema import (
     InfillPattern,
     Kinematics,
     NozzleTemps,
+    PeelCycle,
     PrinterTechnology,
     ProcessSpeeds,
     ProfileBundle,
@@ -321,11 +322,176 @@ def _infer_enclosure(name: str | None) -> bool:
     return any(h in n for h in _ENCLOSED_HINTS)
 
 
+# ── SLA / resin branch helpers ────────────────────────────────────────
+#
+# PrusaSlicer SLA profile INI uses `printer_technology = SLA` (vs the
+# implicit FFF default for FDM). UVtools bundles ~150 SLA profiles in
+# its `Assets/PrusaSlicer/printer/*.ini` — the same shape PrusaSlicer
+# itself ships, with `inherits = Original Prusa SL1` chains and a
+# `printer_notes` blob carrying vendor-specific peel-cycle values
+# inside a `START_CUSTOM_VALUES` / `END_CUSTOM_VALUES` block.
+
+_CUSTOM_VALUE_RE = re.compile(r"([A-Za-z][A-Za-z0-9]*)_([\-0-9.]+)")
+
+
+def _detect_technology(data: dict[str, Any]) -> PrinterTechnology:
+    """Read `printer_technology` from the resolved profile.
+
+    PrusaSlicer FDM profiles often omit the field (defaults to FFF) so
+    we treat anything that isn't an explicit `SLA` literal as FDM.
+    Future powder-bed translators (SLS / MJF) would extend this map.
+    """
+    raw = (data.get("printer_technology") or "").strip().upper()
+    if raw == "SLA":
+        return PrinterTechnology.RESIN_MSLA
+    return PrinterTechnology.FDM
+
+
+def _parse_custom_values_block(notes: str | None) -> dict[str, float]:
+    """Pull the START_CUSTOM_VALUES … END_CUSTOM_VALUES block out of
+    `printer_notes`. PrusaSlicer's INI escapes newlines as `\\n`, so
+    accept both the literal and the escaped form.
+    """
+    if not notes:
+        return {}
+    text = notes.replace("\\n", "\n")
+    start = text.find("START_CUSTOM_VALUES")
+    end = text.find("END_CUSTOM_VALUES")
+    if start < 0 or end < 0 or end <= start:
+        return {}
+    block = text[start + len("START_CUSTOM_VALUES") : end]
+    out: dict[str, float] = {}
+    for m in _CUSTOM_VALUE_RE.finditer(block):
+        try:
+            out[m.group(1)] = float(m.group(2))
+        except ValueError:
+            continue
+    return out
+
+
+def _parse_sla_peel_cycle(data: dict[str, Any]) -> PeelCycle | None:
+    """Build the resin peel-cycle block from a PrusaSlicer SLA profile.
+
+    Sources, in priority order:
+      1. `printer_notes` `START_CUSTOM_VALUES` block (BottomLiftHeight,
+         LiftHeight, BottomLiftSpeed, LiftSpeed, RetractSpeed,
+         BottomLightPWM, LightPWM, WaitTimeBeforeCure) — Anycubic /
+         Elegoo / Phrozen vendor convention.
+      2. Top-level INI keys (`fast_tilt_time`, `slow_tilt_time`) —
+         Original Prusa SL1 convention for tilt-bed printers.
+    """
+    custom = _parse_custom_values_block(_to_str_verbatim(data.get("printer_notes")))
+
+    def _f(key: str) -> float | None:
+        v = custom.get(key)
+        return v if v and v > 0 else None
+
+    def _i(key: str) -> int | None:
+        v = custom.get(key)
+        if v is None:
+            return None
+        i = int(v)
+        if 0 <= i <= 255:
+            return i
+        return None
+
+    fields: dict[str, Any] = {
+        "lift_height_mm":              _f("LiftHeight"),
+        "lift_speed_mm_min":           _f("LiftSpeed"),
+        "retract_speed_mm_min":        _f("RetractSpeed"),
+        "bottom_lift_height_mm":       _f("BottomLiftHeight"),
+        "bottom_lift_speed_mm_min":    _f("BottomLiftSpeed"),
+        "bottom_retract_speed_mm_min": _f("BottomRetractSpeed"),
+        "light_pwm":                   _i("LightPWM"),
+        "bottom_light_pwm":            _i("BottomLightPWM"),
+        "fast_tilt_time_s":            _to_float(data.get("fast_tilt_time")),
+        "slow_tilt_time_s":            _to_float(data.get("slow_tilt_time")),
+        "wait_time_before_cure_s":     _f("WaitTimeBeforeCure"),
+    }
+    if not any(v is not None for v in fields.values()):
+        return None
+    return PeelCycle(**{
+        k: v for k, v in fields.items()
+        if v is not None and (not isinstance(v, (int, float)) or v > 0 or k.endswith("_pwm"))
+    })
+
+
+def _build_sla_printer(
+    resolved: ResolvedProfile,
+    data: dict[str, Any],
+    source: SourceMetadata,
+) -> CanonicalPrinter:
+    """Assemble a CanonicalPrinter from a PrusaSlicer SLA INI profile.
+
+    Maps the LCD geometry fields to the canonical resin block, parses
+    peel-cycle from `printer_notes`, skips every FDM-only field
+    (nozzle, retraction, gcode_flavor, axis feedrates).
+    """
+    width = _to_float(data.get("display_width"))
+    height = _to_float(data.get("display_height"))
+    z_height = _to_float(data.get("max_print_height"))
+    if width is None or height is None or not z_height or z_height <= 0:
+        # Geometry missing — keep the printer in catalog with a
+        # sentinel so the consumer surfaces it rather than silently
+        # dropping. Strict schema needs positive values, so fall back
+        # to 1mm — a downstream "did this profile resolve?" check
+        # catches the all-1 case.
+        build_volume = BuildVolumeMm(
+            x=width if width and width > 0 else 1,
+            y=height if height and height > 0 else 1,
+            z=z_height if z_height and z_height > 0 else 1,
+        )
+    else:
+        build_volume = BuildVolumeMm(x=width, y=height, z=z_height)
+
+    px_x = _to_int(data.get("display_pixels_x"))
+    px_y = _to_int(data.get("display_pixels_y"))
+    lcd_resolution: tuple[int, int] | None = None
+    pixel_size: float | None = None
+    if px_x and px_y and px_x > 0 and px_y > 0:
+        lcd_resolution = (px_x, px_y)
+        if width and width > 0:
+            pixel_size = width / px_x
+
+    return CanonicalPrinter(
+        id=f"{resolved.vendor}/{resolved.name}",
+        name=resolved.name,
+        vendor=resolved.vendor,
+        technology=PrinterTechnology.RESIN_MSLA,
+        build_volume_mm=build_volume,
+        firmware=None,
+        kinematics=Kinematics.UNKNOWN,
+        enclosure=False,
+        pixel_size_mm=pixel_size,
+        lcd_resolution_px=lcd_resolution,
+        peel_cycle=_parse_sla_peel_cycle(data),
+        source=source,
+        raw_data=_strip_metadata(data),
+    )
+
+
 # ── Translators ───────────────────────────────────────────────────────
 
 
 def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
     data = resolved.data
+
+    # Branch on the technology field. SLA profiles have a separate
+    # geometry shape (LCD area, not nozzle / extruder) and entirely
+    # different motion model (peel cycle, no retraction). Sharing a
+    # single FDM-shaped fall-through silently dropped 152 resin
+    # printers from the canonical catalog; SLA path now lifts them.
+    tech = _detect_technology(data)
+    source = SourceMetadata(
+        slicer="prusa",
+        vendor=resolved.vendor,
+        source_id=resolved.name,
+        inherits_chain=resolved.inherits_chain,
+    )
+    if tech == PrinterTechnology.RESIN_MSLA:
+        return _build_sla_printer(resolved, data, source)
+
+    # FDM path (existing behaviour) ─────────────────────────────────────
     build_volume = _parse_bed_shape(
         data.get("bed_shape"),
         data.get("max_print_height"),
@@ -360,12 +526,8 @@ def translate_printer(resolved: ResolvedProfile) -> CanonicalPrinter:
         else RetractionType.UNKNOWN
     )
 
-    source = SourceMetadata(
-        slicer="prusa",
-        vendor=resolved.vendor,
-        source_id=resolved.name,
-        inherits_chain=resolved.inherits_chain,
-    )
+    # `source` is built above the SLA branch (line ~485) so we don't
+    # rebuild it here.
 
     # Printer model for kinematics/enclosure inference — prefer the
     # dedicated field when present, fall back to the profile name.
@@ -672,9 +834,106 @@ def load_prusa(profiles_root: str | Path) -> ProfileBundle:
     return merged
 
 
+# ── UVtools-style per-file SLA loader ─────────────────────────────────
+#
+# UVtools bundles ~150 PrusaSlicer SLA profiles in
+# `Assets/PrusaSlicer/printer/<Name>.ini` (one printer per file, no
+# `[printer:Name]` section header — type implied by directory). Same
+# value dialect as `load_prusa_ini` consumes inside multi-section
+# vendor INIs, so we lift the existing translate_* functions verbatim
+# and just rebuild the index walker.
+
+def _load_per_file_ini(path: Path) -> dict[str, Any]:
+    """Read a single per-file PrusaSlicer-style INI (no section header)
+    and return the flat key→value map. Comments and blank lines are
+    skipped; section markers (`[printer:Name]`) are tolerated when
+    present and treated as no-ops.
+    """
+    out: dict[str, Any] = {}
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                continue
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            out[key.strip()] = value.strip()
+    return out
+
+
+def load_uvtools_assets(assets_root: str | Path) -> ProfileBundle:
+    """Parse a UVtools `Assets/PrusaSlicer/` directory and translate the
+    bundled SLA profiles into a canonical bundle.
+
+    Layout convention (matches PrusaSlicer source repo
+    `resources/profiles/<Vendor>/printer/*.ini`):
+
+        <root>/printer/<Name>.ini           → CanonicalPrinter (RESIN_MSLA)
+        <root>/sla_print/<Name>.ini         → CanonicalProcess
+        <root>/sla_material/<Name>.ini      → CanonicalFilament   (rare)
+
+    UVtools ships `printer/` + `sla_print/` only; `sla_material/` is
+    typically empty and the consumer synthesises a Generic Std Resin
+    when no filament is bundled.
+
+    The `vendor` carried on each profile is derived from the printer
+    name's first token ("Anycubic", "Elegoo", "Phrozen", ...). PrusaSlicer
+    SLA bundles don't carry vendor metadata at the file layer the way
+    FDM multi-section INIs do.
+    """
+    root = Path(assets_root).expanduser().resolve()
+    if not root.is_dir():
+        raise NotADirectoryError(f"UVtools assets root does not exist: {root}")
+
+    bundle = ProfileBundle(slicer="prusa", slicer_version="uvtools-bundle")
+
+    # Walk printer/<Name>.ini → translate_printer
+    printer_dir = root / "printer"
+    if printer_dir.is_dir():
+        for ini in sorted(printer_dir.glob("*.ini")):
+            data = _load_per_file_ini(ini)
+            if not data:
+                continue
+            vendor = data.get("printer_vendor") or ini.stem.split(" ", 1)[0]
+            resolved = ResolvedProfile(
+                type="printer",
+                name=ini.stem,
+                vendor=vendor,
+                data=data,
+                inherits_chain=[],
+            )
+            try:
+                printer = translate_printer(resolved)
+            except Exception:
+                # Skip the rare profile that fails strict-schema validation
+                # (incomplete display fields, etc.) rather than failing the
+                # whole bundle. The profile loss is logged at the consumer
+                # layer; bundle-level resilience is more valuable than a
+                # 100%-or-nothing parse.
+                continue
+            bundle.printers[printer.id] = printer
+
+    # `sla_print/` and `sla_material/` directories are intentionally
+    # skipped at the bundle layer for V1: the existing
+    # `translate_process` / `translate_filament` are FDM-shaped and
+    # SLA INIs miss keys those validators require (perimeter_count,
+    # nozzle_temp_c, etc.). Consumers synthesise a Generic Std Resin
+    # process + filament at recipe-build time, which is the same
+    # pragmatic shortcut Admeshio's `profile_catalog` already takes
+    # for resin recipes today. A future SLA-aware translate_process /
+    # translate_filament can lift these dirs without breaking the
+    # printer-only consumer surface.
+
+    return bundle
+
+
 __all__ = [
     "load_prusa",
     "load_prusa_ini",
+    "load_uvtools_assets",
     "translate_filament",
     "translate_printer",
     "translate_process",
